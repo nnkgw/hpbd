@@ -318,7 +318,11 @@ int main(int argc, char **argv) {
 
   glutMouseFunc(mouseButton);
   glutMotionFunc(mouseMotion);
+#if defined(__APPLE__) || defined(MACOSX)
+
+#else
   glutMouseWheelFunc(mouseWheel);
+#endif
 
   glutMainLoop();
   return 0;
