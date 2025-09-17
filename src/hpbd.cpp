@@ -318,10 +318,14 @@ int main(int argc, char **argv) {
 
   glutMouseFunc(mouseButton);
   glutMotionFunc(mouseMotion);
-#if defined(__APPLE__) || defined(MACOSX)
-
-#else
+#if defined(FREEGLUT)
   glutMouseWheelFunc(mouseWheel);
+#else
+  auto keyboard = [](unsigned char key, int, int) {
+      if (key == '+') { camDist *= 0.9f; if (camDist < 0.5f) camDist = 0.5f; }
+      if (key == '-') { camDist *= 1.1f; if (camDist > 6.0f) camDist = 6.0f; }
+  };
+  glutKeyboardFunc(keyboard);
 #endif
 
   glutMainLoop();
