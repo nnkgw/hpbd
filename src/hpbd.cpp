@@ -1,9 +1,15 @@
-﻿// hpbd.cpp
-// Minimal but extensible Hierarchical Position-Based Dynamics demo
-// freeglut + glm だけで動作します。
-// 論文の主要式 (2)?(7) と変数名（p, v, q, λ, w_i, w_ij, P(i) など）を対応。
-
+﻿// Hierarchical Position-Based Dynamics
+#if defined(WIN32)
+#pragma warning(disable:4996)
 #include <GL/freeglut.h>
+#elif defined(__APPLE__) || defined(MACOSX)
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#define GL_SILENCE_DEPRECATION
+#include <GLUT/glut.h>
+#else
+#include <GL/freeglut.h>
+#endif
+
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <vector>
@@ -43,6 +49,15 @@ std::vector<Particle> P;
 std::vector<std::vector<int>> levelParticles;
 std::vector<Constraint> constraints;
 int Lmax = 2;
+
+// --------- Camera -----------
+float camDist = 2.0f;
+float camYaw = 0.0f;
+float camPitch = -30.0f * 3.14159265f / 180.0f;
+vec2 camPan(0.0f, -0.3f);
+int lastMouseX = 0, lastMouseY = 0;
+bool lbtn = false, rbtn = false;
+// ---------------------------------------------
 
 inline int idx(int x, int y) { return y * clothW + x; }
 
@@ -234,8 +249,10 @@ void display() {
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   glMatrixMode(GL_MODELVIEW);
   glLoadIdentity();
-  glTranslatef(0.0f, -0.3f, -2.0f);
-  glRotatef(-30.f, 1, 0, 0);
+
+  glTranslatef(camPan.x, camPan.y, -camDist);
+  glRotatef(camPitch * 180.0f / 3.14159265f, 1, 0, 0);
+  glRotatef(camYaw   * 180.0f / 3.14159265f, 0, 1, 0);
 
   simulate();
   drawCloth();
@@ -248,6 +265,39 @@ void reshape(int w, int h) {
   glMatrixMode(GL_PROJECTION);
   glLoadIdentity();
   gluPerspective(45.0, (double)w / h, 0.01, 10.0);
+}
+
+void mouseButton(int button, int state, int x, int y) {
+  if (button == GLUT_LEFT_BUTTON)  lbtn = (state == GLUT_DOWN);
+  if (button == GLUT_RIGHT_BUTTON) rbtn = (state == GLUT_DOWN);
+  lastMouseX = x;
+  lastMouseY = y;
+}
+
+void mouseMotion(int x, int y) {
+  int dx = x - lastMouseX;
+  int dy = y - lastMouseY;
+  lastMouseX = x;
+  lastMouseY = y;
+
+  if (lbtn) {
+    camYaw   += dx * 0.005f;
+    camPitch += dy * 0.005f;
+    const float lim = 1.5f;
+    if (camPitch >  lim) camPitch =  lim;
+    if (camPitch < -lim) camPitch = -lim;
+  }
+  if (rbtn) {
+    float s = 0.002f * camDist;
+    camPan.x += dx * s;
+    camPan.y -= dy * s;
+  }
+}
+
+void mouseWheel(int wheel, int direction, int x, int y) {
+  camDist *= (direction > 0) ? 0.9f : 1.1f;
+  if (camDist < 0.5f) camDist = 0.5f;
+  if (camDist > 6.0f) camDist = 6.0f;
 }
 
 int main(int argc, char **argv) {
@@ -265,6 +315,11 @@ int main(int argc, char **argv) {
   glutDisplayFunc(display);
   glutReshapeFunc(reshape);
   glutIdleFunc(display);
+
+  glutMouseFunc(mouseButton);
+  glutMotionFunc(mouseMotion);
+  glutMouseWheelFunc(mouseWheel);
+
   glutMainLoop();
   return 0;
 }
