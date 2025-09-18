@@ -304,10 +304,10 @@ int main(int argc, char **argv) {
   glutInit(&argc, argv);
   glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
   glutInitWindowSize(960, 600);
-  glutCreateWindow("Hierarchical PBD demo");
+  glutCreateWindow("Hierarchical Position-Based Dynamics");
 
   glEnable(GL_DEPTH_TEST);
-  glClearColor(0.1f, 0.1f, 0.15f, 1);
+  glClearColor(0.1f, 0.1f, 0.1f, 1);
 
   buildLevel0();
   buildHierarchy();
@@ -322,8 +322,8 @@ int main(int argc, char **argv) {
   glutMouseWheelFunc(mouseWheel);
 #else
   auto keyboard = [](unsigned char key, int, int) {
-      if (key == '+') { camDist *= 0.9f; if (camDist < 0.5f) camDist = 0.5f; }
-      if (key == '-') { camDist *= 1.1f; if (camDist > 6.0f) camDist = 6.0f; }
+    if (key == '+') { camDist *= 0.9f; if (camDist < 0.5f) camDist = 0.5f; }
+    if (key == '-') { camDist *= 1.1f; if (camDist > 6.0f) camDist = 6.0f; }
   };
   glutKeyboardFunc(keyboard);
 #endif
