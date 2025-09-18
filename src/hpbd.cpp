@@ -99,25 +99,43 @@ void buildHierarchy() {
 
   for (int l = 1; l <= Lmax; ++l) {
     int step = 1 << l;
-    for (int y = 0; y < clothH; y += step) {
-      for (int x = 0; x < clothW; x += step) {
-        int finest = idx(x, y);
-        Particle parent = P[finest];
-        parent.level = l;
-        parent.pinned = (y == 0 && (x == 0 || x == clothW - 1));
-        parent.w = parent.pinned ? 0.0f : 1.0f;
-        int pid = (int)P.size();
-        P.push_back(parent);
-        levelParticles[l].push_back(pid);
-        mapL[finest] = pid;
-      }
-    }
     int coarseW = (clothW + step - 1) / step;
     int coarseH = (clothH + step - 1) / step;
+
+    auto fx_of = [&](int cx) {
+      return (cx == coarseW - 1) ? (clothW - 1) : cx * step;
+    };
+    auto fy_of = [&](int cy) {
+      return (cy == coarseH - 1) ? (clothH - 1) : cy * step;
+    };
+
+    for (int cy = 0; cy < coarseH; ++cy) {
+      for (int cx = 0; cx < coarseW; ++cx) {
+        int fx = fx_of(cx);
+        int fy = fy_of(cy);
+        int finest = idx(fx, fy);
+        if (mapL[finest] == -1) {
+          Particle parent = P[finest];
+          parent.level = l;
+
+          bool isTop = (fy == 0);
+          bool isTopLeft  = isTop && (fx == 0);
+          bool isTopRight = isTop && (fx == clothW - 1);
+          parent.pinned = (isTopLeft || isTopRight);
+          parent.w = parent.pinned ? 0.0f : 1.0f;
+          if (parent.pinned) parent.pinPos = parent.p;
+
+          int pid = (int)P.size();
+          P.push_back(parent);
+          levelParticles[l].push_back(pid);
+          mapL[finest] = pid;
+        }
+      }
+    }
     auto coarseIndex = [&](int cx, int cy) -> int {
-      int fx = cx * step;
-      int fy = cy * step;
-      return mapL[idx(std::min(fx, clothW - 1), std::min(fy, clothH - 1))];
+      int fx = fx_of(cx);
+      int fy = fy_of(cy);
+      return mapL[idx(fx, fy)];
     };
     for (int cy = 0; cy < coarseH; ++cy) {
       for (int cx = 0; cx < coarseW; ++cx) {
@@ -134,18 +152,17 @@ void buildHierarchy() {
       }
     }
   }
-
   const float eps = 1e-6f;
   for (int l = Lmax; l >= 1; --l) {
     for (int i : levelParticles[l - 1]) {
       P[i].parents.clear();
       P[i].wij.clear();
-      std::vector<std::pair<float, int>> cand;
+      std::vector<std::pair<float,int>> cand;
       for (int pj : levelParticles[l]) {
         cand.push_back({length(P[pj].p - P[i].p), pj});
       }
       std::sort(cand.begin(), cand.end(),
-                [](auto &a, auto &b) { return a.first < b.first; });
+                [](auto &a, auto &b){ return a.first < b.first; });
       int k = std::min(2, (int)cand.size());
       float denom = 0.f;
       for (int t = 0; t < k; ++t) {
@@ -216,7 +233,7 @@ void simulate() {
       a.p += dt * a.v;
     }
 
-  hierarchicalSolve(2);
+  hierarchicalSolve(3);
 
   for (size_t i = 0; i < P.size(); ++i) {
     vec3 xnew = P[i].p;
