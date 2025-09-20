@@ -217,7 +217,7 @@ void simulate() {
   for (size_t i = 0; i < P.size(); ++i) prevX[i] = P[i].p;
 
   for (auto &a : P)
-    if (!a.pinned) {
+    if (!a.pinned && a.level == 0) {
       a.v += dt * g;
       a.p += dt * a.v;
     }
@@ -241,7 +241,9 @@ void drawCloth() {
   glEnd();
 
   for (int l = 1; l <= Lmax; ++l) {
-    glPointSize(4.0f);
+    float zoff = 0.003f * l;
+    glPointSize(4.0f + 2.0f * l);
+    glTranslatef(0.f, 0.f, zoff);
     glBegin(GL_POINTS);
     for (int i : levelParticles[l]) {
       glColor3f(0.2f + 0.3f * l, 0.6f - 0.2f * l, 1.0f - 0.3f * l);
