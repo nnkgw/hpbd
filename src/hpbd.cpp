@@ -50,6 +50,7 @@ std::vector<Particle> P;
 std::vector<std::vector<int>> levelParticles;
 std::vector<Constraint> constraints;
 int Lmax = 2;
+std::vector<int> coarseFromFine;
 
 // --------- Camera -----------
 float camDist = 2.0f;
@@ -63,7 +64,7 @@ bool lbtn = false, rbtn = false;
 // --------- Toggles ----------
 bool g_useHierarchy = true;   // toggle with 'H'
 int  g_itersHier    = 3;      // iterations per level when hierarchy ON
-int  g_itersPlain   = 20;     // iterations for level-0 when hierarchy OFF
+int  g_itersPlain   = 3/*20*/;     // iterations for level-0 when hierarchy OFF
 // ----------------------------
 
 inline int idx(int x, int y) { return y * clothW + x; }
@@ -73,6 +74,9 @@ void buildLevel0() {
   P.resize(clothW * clothH);
   levelParticles.assign(Lmax + 1, {});
   constraints.clear();
+
+  // NEW: initialize mapping for level-0
+  coarseFromFine.assign(clothW * clothH, -1);
 
   for (int y = 0; y < clothH; ++y) {
     for (int x = 0; x < clothW; ++x) {
@@ -88,6 +92,9 @@ void buildLevel0() {
         P[id].w = 0.0f;
       }
       levelParticles[0].push_back(id);
+
+      // NEW: level-0 particle maps to itself
+      coarseFromFine[id] = id;
     }
   }
 
@@ -102,16 +109,13 @@ void buildLevel0() {
   }
 }
 
+
 void buildHierarchy() {
-  // build levels 1..Lmax
   for (int l = 1; l <= Lmax; ++l) {
     int step = 1 << l;
-
-    // clear container for this level
     if ((int)levelParticles.size() <= l) levelParticles.resize(l + 1);
     levelParticles[l].clear();
 
-    // per-level map from finest grid index to newly created parent id
     std::vector<int> mapL_level(clothW * clothH, -1);
 
     int coarseW = (clothW + step - 1) / step;
@@ -120,7 +124,6 @@ void buildHierarchy() {
     auto fx_of = [&](int cx) { return (cx == coarseW - 1) ? (clothW - 1) : cx * step; };
     auto fy_of = [&](int cy) { return (cy == coarseH - 1) ? (clothH - 1) : cy * step; };
 
-    // create parents at snapped samples so right/top edges are included
     for (int cy = 0; cy < coarseH; ++cy) {
       for (int cx = 0; cx < coarseW; ++cx) {
         int fx = fx_of(cx);
@@ -141,11 +144,15 @@ void buildHierarchy() {
           P.push_back(parent);
           levelParticles[l].push_back(pid);
           mapL_level[finest] = pid;
+
+          // NEW: remember which finest index this coarse particle comes from
+          if ((int)coarseFromFine.size() < (int)P.size())
+            coarseFromFine.resize(P.size(), -1);
+          coarseFromFine[pid] = finest;
         }
       }
     }
 
-    // connect parents on this level with distance constraints (grid adjacency)
     auto coarseIndex = [&](int cx, int cy) -> int {
       int fx = fx_of(cx);
       int fy = fy_of(cy);
@@ -167,7 +174,6 @@ void buildHierarchy() {
     }
   }
 
-  // parent links and normalized weights (distance-based)
   const float eps = 1e-6f;
   for (int l = Lmax; l >= 1; --l) {
     for (int i : levelParticles[l - 1]) {
@@ -192,6 +198,7 @@ void buildHierarchy() {
     }
   }
 }
+
 
 void projectConstraint(const Constraint &Cst) {
   Particle &A = P[Cst.i];
@@ -221,8 +228,22 @@ void solveLevel(int level, int iterations) {
 
 void hierarchicalSolve(int solverItersPerLevel = 2) {
   for (int l = Lmax; l >= 0; --l) {
+
+    // NEW: restriction — sync coarse positions from their source finest indices
+    if (l > 0) {
+      for (int i : levelParticles[l]) {
+        int src = (i < (int)coarseFromFine.size()) ? coarseFromFine[i] : -1;
+        if (src >= 0) P[i].p = P[src].p;
+      }
+    }
+
+    // save q_l (pre-projection positions on this level)
     for (int i : levelParticles[l]) P[i].q = P[i].p;
+
+    // project constraints on this level
     solveLevel(l, solverItersPerLevel);
+
+    // prolongation — propagate corrections (p - q) down to level l-1
     if (l > 0) {
       for (int i : levelParticles[l - 1]) {
         vec3 corr(0);
@@ -236,6 +257,7 @@ void hierarchicalSolve(int solverItersPerLevel = 2) {
     }
   }
 }
+
 
 std::vector<vec3> prevX;
 
