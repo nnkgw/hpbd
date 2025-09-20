@@ -15,6 +15,7 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
+#include <cstdio>
 
 using glm::vec2;
 using glm::vec3;
@@ -57,7 +58,13 @@ float camPitch = -30.0f * 3.14159265f / 180.0f;
 vec2 camPan(0.0f, -0.3f);
 int lastMouseX = 0, lastMouseY = 0;
 bool lbtn = false, rbtn = false;
-// ---------------------------------------------
+// ----------------------------
+
+// --------- Toggles ----------
+bool g_useHierarchy = true;   // toggle with 'H'
+int  g_itersHier    = 3;      // iterations per level when hierarchy ON
+int  g_itersPlain   = 20;     // iterations for level-0 when hierarchy OFF
+// ----------------------------
 
 inline int idx(int x, int y) { return y * clothW + x; }
 
@@ -65,6 +72,7 @@ void buildLevel0() {
   P.clear();
   P.resize(clothW * clothH);
   levelParticles.assign(Lmax + 1, {});
+  constraints.clear();
 
   for (int y = 0; y < clothH; ++y) {
     for (int x = 0; x < clothW; ++x) {
@@ -95,23 +103,33 @@ void buildLevel0() {
 }
 
 void buildHierarchy() {
+  // build levels 1..Lmax
   for (int l = 1; l <= Lmax; ++l) {
     int step = 1 << l;
 
-    int coarseW = (clothW + step - 1) / step;
-    int coarseH = (clothH + step - 1) / step;
+    // clear container for this level
+    if ((int)levelParticles.size() <= l) levelParticles.resize(l + 1);
+    levelParticles[l].clear();
+
+    // per-level map from finest grid index to newly created parent id
     std::vector<int> mapL_level(clothW * clothH, -1);
 
-    auto fx_of = [&](int cx){ return (cx == coarseW - 1) ? (clothW - 1) : cx * step; };
-    auto fy_of = [&](int cy){ return (cy == coarseH - 1) ? (clothH - 1) : cy * step; };
+    int coarseW = (clothW + step - 1) / step;
+    int coarseH = (clothH + step - 1) / step;
 
+    auto fx_of = [&](int cx) { return (cx == coarseW - 1) ? (clothW - 1) : cx * step; };
+    auto fy_of = [&](int cy) { return (cy == coarseH - 1) ? (clothH - 1) : cy * step; };
+
+    // create parents at snapped samples so right/top edges are included
     for (int cy = 0; cy < coarseH; ++cy) {
       for (int cx = 0; cx < coarseW; ++cx) {
-        int fx = fx_of(cx), fy = fy_of(cy);
+        int fx = fx_of(cx);
+        int fy = fy_of(cy);
         int finest = idx(fx, fy);
         if (mapL_level[finest] == -1) {
           Particle parent = P[finest];
           parent.level = l;
+
           bool isTop = (fy == 0);
           bool isTopLeft  = isTop && (fx == 0);
           bool isTopRight = isTop && (fx == clothW - 1);
@@ -126,36 +144,46 @@ void buildHierarchy() {
         }
       }
     }
-    auto coarseIndex = [&](int cx, int cy)->int {
-      int fx = fx_of(cx), fy = fy_of(cy);
+
+    // connect parents on this level with distance constraints (grid adjacency)
+    auto coarseIndex = [&](int cx, int cy) -> int {
+      int fx = fx_of(cx);
+      int fy = fy_of(cy);
       return mapL_level[idx(fx, fy)];
     };
     for (int cy = 0; cy < coarseH; ++cy) {
       for (int cx = 0; cx < coarseW; ++cx) {
         int a = coarseIndex(cx, cy);
         if (a < 0) continue;
-        if (cx + 1 < coarseW) { int b = coarseIndex(cx + 1, cy);
+        if (cx + 1 < coarseW) {
+          int b = coarseIndex(cx + 1, cy);
           if (b >= 0) constraints.push_back({a, b, length(P[a].p - P[b].p), l});
         }
-        if (cy + 1 < coarseH) { int b = coarseIndex(cx, cy + 1);
+        if (cy + 1 < coarseH) {
+          int b = coarseIndex(cx, cy + 1);
           if (b >= 0) constraints.push_back({a, b, length(P[a].p - P[b].p), l});
         }
       }
     }
   }
 
+  // parent links and normalized weights (distance-based)
   const float eps = 1e-6f;
   for (int l = Lmax; l >= 1; --l) {
     for (int i : levelParticles[l - 1]) {
       P[i].parents.clear();
       P[i].wij.clear();
-      std::vector<std::pair<float,int>> cand;
-      for (int pj : levelParticles[l]) cand.push_back({length(P[pj].p - P[i].p), pj});
-      std::sort(cand.begin(), cand.end(), [](auto &a, auto &b){ return a.first < b.first; });
+      std::vector<std::pair<float, int>> cand;
+      for (int pj : levelParticles[l]) {
+        cand.push_back({length(P[pj].p - P[i].p), pj});
+      }
+      std::sort(cand.begin(), cand.end(),
+                [](auto &a, auto &b) { return a.first < b.first; });
       int k = std::min(2, (int)cand.size());
       float denom = 0.f;
       for (int t = 0; t < k; ++t) {
-        float dij = cand[t].first, wij = 1.0f / (dij + eps);
+        float dij = cand[t].first;
+        float wij = 1.0f / (dij + eps);
         P[i].parents.push_back(cand[t].second);
         P[i].wij.push_back(wij);
         denom += wij;
@@ -164,7 +192,6 @@ void buildHierarchy() {
     }
   }
 }
-
 
 void projectConstraint(const Constraint &Cst) {
   Particle &A = P[Cst.i];
@@ -216,14 +243,21 @@ void simulate() {
   prevX.resize(P.size());
   for (size_t i = 0; i < P.size(); ++i) prevX[i] = P[i].p;
 
+  // integrate only finest level (original DoFs)
   for (auto &a : P)
     if (!a.pinned && a.level == 0) {
       a.v += dt * g;
       a.p += dt * a.v;
     }
 
-  hierarchicalSolve(3);
+  // toggle between hierarchical and plain PBD
+  if (g_useHierarchy) {
+    hierarchicalSolve(g_itersHier);
+  } else {
+    solveLevel(0, g_itersPlain);
+  }
 
+  // reconstruct velocities from displacement
   for (size_t i = 0; i < P.size(); ++i) {
     vec3 xnew = P[i].p;
     P[i].v = (xnew - prevX[i]) / dt;
@@ -240,16 +274,19 @@ void drawCloth() {
     }
   glEnd();
 
-  for (int l = 1; l <= Lmax; ++l) {
-    float zoff = 0.003f * l;
-    glPointSize(4.0f + 2.0f * l);
-    glTranslatef(0.f, 0.f, zoff);
-    glBegin(GL_POINTS);
-    for (int i : levelParticles[l]) {
-      glColor3f(0.2f + 0.3f * l, 0.6f - 0.2f * l, 1.0f - 0.3f * l);
-      glVertex3fv(glm::value_ptr(P[i].p));
+  // draw higher levels only when hierarchy toggle is ON
+  if (g_useHierarchy) {
+    for (int l = 1; l <= Lmax; ++l) {
+      float zoff = 0.003f * l;
+      glPointSize(4.0f + 2.0f * l);
+      glTranslatef(0.f, 0.f, zoff);
+      glBegin(GL_POINTS);
+      for (int i : levelParticles[l]) {
+        glColor3f(0.2f + 0.3f * l, 0.6f - 0.2f * l, 1.0f - 0.3f * l);
+        glVertex3fv(glm::value_ptr(P[i].p));
+      }
+      glEnd();
     }
-    glEnd();
   }
 }
 
@@ -308,6 +345,47 @@ void mouseWheel(int wheel, int direction, int x, int y) {
   if (camDist > 6.0f) camDist = 6.0f;
 }
 
+// reset simulation to initial state
+void resetSim() {
+  constraints.clear();
+  levelParticles.clear();
+  buildLevel0();
+  buildHierarchy();
+}
+
+// keyboard controls (toggle & params)
+void keyboard(unsigned char key, int, int) {
+  switch (key) {
+    case 'h': case 'H':
+      g_useHierarchy = !g_useHierarchy;
+      std::printf("[Toggle] Hierarchy = %s\n", g_useHierarchy ? "ON" : "OFF");
+      break;
+    case ']':
+      g_itersHier = std::min(g_itersHier + 1, 10);
+      std::printf("itersHier=%d\n", g_itersHier);
+      break;
+    case '[':
+      g_itersHier = std::max(g_itersHier - 1, 1);
+      std::printf("itersHier=%d\n", g_itersHier);
+      break;
+    case '}':
+      g_itersPlain = std::min(g_itersPlain + 1, 60);
+      std::printf("itersPlain=%d\n", g_itersPlain);
+      break;
+    case '{':
+      g_itersPlain = std::max(g_itersPlain - 1, 1);
+      std::printf("itersPlain=%d\n", g_itersPlain);
+      break;
+    case 'r': case 'R':
+      resetSim();
+      break;
+    case '+':
+      camDist *= 0.9f; if (camDist < 0.5f) camDist = 0.5f; break;
+    case '-':
+      camDist *= 1.1f; if (camDist > 6.0f) camDist = 6.0f; break;
+  }
+}
+
 int main(int argc, char **argv) {
   glutInit(&argc, argv);
   glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
@@ -328,13 +406,8 @@ int main(int argc, char **argv) {
   glutMotionFunc(mouseMotion);
 #if defined(FREEGLUT)
   glutMouseWheelFunc(mouseWheel);
-#else
-  auto keyboard = [](unsigned char key, int, int) {
-    if (key == '+') { camDist *= 0.9f; if (camDist < 0.5f) camDist = 0.5f; }
-    if (key == '-') { camDist *= 1.1f; if (camDist > 6.0f) camDist = 6.0f; }
-  };
-  glutKeyboardFunc(keyboard);
 #endif
+  glutKeyboardFunc(keyboard);
 
   glutMainLoop();
   return 0;
