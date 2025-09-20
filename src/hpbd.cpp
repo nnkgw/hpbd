@@ -95,29 +95,23 @@ void buildLevel0() {
 }
 
 void buildHierarchy() {
-  std::vector<int> mapL(P.size(), -1);
-
   for (int l = 1; l <= Lmax; ++l) {
     int step = 1 << l;
+
     int coarseW = (clothW + step - 1) / step;
     int coarseH = (clothH + step - 1) / step;
+    std::vector<int> mapL_level(clothW * clothH, -1);
 
-    auto fx_of = [&](int cx) {
-      return (cx == coarseW - 1) ? (clothW - 1) : cx * step;
-    };
-    auto fy_of = [&](int cy) {
-      return (cy == coarseH - 1) ? (clothH - 1) : cy * step;
-    };
+    auto fx_of = [&](int cx){ return (cx == coarseW - 1) ? (clothW - 1) : cx * step; };
+    auto fy_of = [&](int cy){ return (cy == coarseH - 1) ? (clothH - 1) : cy * step; };
 
     for (int cy = 0; cy < coarseH; ++cy) {
       for (int cx = 0; cx < coarseW; ++cx) {
-        int fx = fx_of(cx);
-        int fy = fy_of(cy);
+        int fx = fx_of(cx), fy = fy_of(cy);
         int finest = idx(fx, fy);
-        if (mapL[finest] == -1) {
+        if (mapL_level[finest] == -1) {
           Particle parent = P[finest];
           parent.level = l;
-
           bool isTop = (fy == 0);
           bool isTopLeft  = isTop && (fx == 0);
           bool isTopRight = isTop && (fx == clothW - 1);
@@ -128,46 +122,40 @@ void buildHierarchy() {
           int pid = (int)P.size();
           P.push_back(parent);
           levelParticles[l].push_back(pid);
-          mapL[finest] = pid;
+          mapL_level[finest] = pid;
         }
       }
     }
-    auto coarseIndex = [&](int cx, int cy) -> int {
-      int fx = fx_of(cx);
-      int fy = fy_of(cy);
-      return mapL[idx(fx, fy)];
+    auto coarseIndex = [&](int cx, int cy)->int {
+      int fx = fx_of(cx), fy = fy_of(cy);
+      return mapL_level[idx(fx, fy)];
     };
     for (int cy = 0; cy < coarseH; ++cy) {
       for (int cx = 0; cx < coarseW; ++cx) {
         int a = coarseIndex(cx, cy);
         if (a < 0) continue;
-        if (cx + 1 < coarseW) {
-          int b = coarseIndex(cx + 1, cy);
+        if (cx + 1 < coarseW) { int b = coarseIndex(cx + 1, cy);
           if (b >= 0) constraints.push_back({a, b, length(P[a].p - P[b].p), l});
         }
-        if (cy + 1 < coarseH) {
-          int b = coarseIndex(cx, cy + 1);
+        if (cy + 1 < coarseH) { int b = coarseIndex(cx, cy + 1);
           if (b >= 0) constraints.push_back({a, b, length(P[a].p - P[b].p), l});
         }
       }
     }
   }
+
   const float eps = 1e-6f;
   for (int l = Lmax; l >= 1; --l) {
     for (int i : levelParticles[l - 1]) {
       P[i].parents.clear();
       P[i].wij.clear();
       std::vector<std::pair<float,int>> cand;
-      for (int pj : levelParticles[l]) {
-        cand.push_back({length(P[pj].p - P[i].p), pj});
-      }
-      std::sort(cand.begin(), cand.end(),
-                [](auto &a, auto &b){ return a.first < b.first; });
+      for (int pj : levelParticles[l]) cand.push_back({length(P[pj].p - P[i].p), pj});
+      std::sort(cand.begin(), cand.end(), [](auto &a, auto &b){ return a.first < b.first; });
       int k = std::min(2, (int)cand.size());
       float denom = 0.f;
       for (int t = 0; t < k; ++t) {
-        float dij = cand[t].first;
-        float wij = 1.0f / (dij + eps);
+        float dij = cand[t].first, wij = 1.0f / (dij + eps);
         P[i].parents.push_back(cand[t].second);
         P[i].wij.push_back(wij);
         denom += wij;
@@ -176,6 +164,7 @@ void buildHierarchy() {
     }
   }
 }
+
 
 void projectConstraint(const Constraint &Cst) {
   Particle &A = P[Cst.i];
