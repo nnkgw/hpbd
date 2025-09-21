@@ -315,7 +315,6 @@ void display() {
   glRotatef(camPitch * 180.0f / 3.14159265f, 1, 0, 0);
   glRotatef(camYaw   * 180.0f / 3.14159265f, 0, 1, 0);
 
-  simulate();
   drawCloth();
 
   glutSwapBuffers();
@@ -326,6 +325,17 @@ void reshape(int w, int h) {
   glMatrixMode(GL_PROJECTION);
   glLoadIdentity();
   gluPerspective(45.0, (double)w / h, 0.01, 10.0);
+}
+
+void idle(void){
+  GLfloat time = (float)glutGet(GLUT_ELAPSED_TIME) / 1000.0f;
+  simulate();
+  while(1) {
+    if (((float)glutGet(GLUT_ELAPSED_TIME) / 1000.0f - time) > dt) {
+      break; // keep fps
+    }
+  }
+  glutPostRedisplay();
 }
 
 void mouseButton(int button, int state, int x, int y) {
@@ -452,7 +462,7 @@ int main(int argc, char **argv) {
 
   glutDisplayFunc(display);
   glutReshapeFunc(reshape);
-  glutIdleFunc(display);
+  glutIdleFunc(idle);
 
   glutMouseFunc(mouseButton);
   glutMotionFunc(mouseMotion);
