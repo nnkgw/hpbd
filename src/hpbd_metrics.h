@@ -44,6 +44,29 @@ inline int countConstraintsOnLevel(int level) {
   int k=0; for (const auto& c: constraints) if (c.level==level) ++k; return k;
 }
 
+// ---------- Relative stretch (%) in paper style ----------
+inline double computeRelStretchL1pct() {
+  using glm::length;
+  double sum = 0.0; int m = 0;
+  for (const auto& c : constraints) if (c.level == 0) {
+    double d = length(P[c.i].p - P[c.j].p);
+    double ext = d > c.rest ? (d - c.rest) / c.rest * 100.0 : 0.0;
+    sum += ext; ++m;
+  }
+  return (m ? sum / m : 0.0);
+}
+
+inline double computeRelStretchLmaxpct() {
+  using glm::length;
+  double smax = 0.0;
+  for (const auto& c : constraints) if (c.level == 0) {
+    double d = length(P[c.i].p - P[c.j].p);
+    double ext = d > c.rest ? (d - c.rest) / c.rest * 100.0 : 0.0;
+    if (ext > smax) smax = ext;
+  }
+  return smax;
+}
+
 // ---------- Minimal CSV logger (RAII) ----------
 struct CsvLogger {
   std::FILE* f{nullptr};
