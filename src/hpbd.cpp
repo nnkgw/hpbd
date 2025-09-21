@@ -1,4 +1,4 @@
-﻿// Hierarchical Position-Based Dynamics
+﻿// hpbd.cpp - Hierarchical Position-Based Dynamics (with minimal metrics/logging hooks)
 #if defined(WIN32)
 #pragma warning(disable:4996)
 #include <GL/freeglut.h>
@@ -24,21 +24,21 @@ using glm::length;
 using glm::normalize;
 
 struct Constraint {
-  int i, j;      // particle indices
-  float rest;    // rest length
-  int level;     // hierarchy level
+  int i, j;
+  float rest;
+  int level;
 };
 
 struct Particle {
   vec3 p;                 // position
   vec3 v;                 // velocity
-  vec3 q;                 // saved position q_l (Alg. Sec.7 step 2)
-  float w;                // inverse mass (w_i = 1/m_i)
+  vec3 q;                 // saved position per level
+  float w;                // inverse mass
   int level;              // finest level this particle belongs to
-  std::vector<int> parents;   // indices of parent particles P(i)
-  std::vector<float> wij;     // weights w_ij (Eq.(6))
-  bool pinned = false;    // cardinality-1 constraint
-  vec3 pinPos;            // pin target
+  std::vector<int> parents;
+  std::vector<float> wij;
+  bool pinned = false;
+  vec3 pinPos;
 };
 
 static const float dt = 1.0f / 60.0f;
@@ -50,32 +50,32 @@ std::vector<Particle> P;
 std::vector<std::vector<int>> levelParticles;
 std::vector<Constraint> constraints;
 int Lmax = 2;
-std::vector<int> coarseFromFine;
 
-// --------- Camera -----------
+// Camera
 float camDist = 2.0f;
 float camYaw = 0.0f;
 float camPitch = -30.0f * 3.14159265f / 180.0f;
 vec2 camPan(0.0f, -0.3f);
 int lastMouseX = 0, lastMouseY = 0;
 bool lbtn = false, rbtn = false;
-// ----------------------------
 
-// --------- Toggles ----------
-bool g_useHierarchy = true;   // toggle with 'H'
-int  g_itersHier    = 3;      // iterations per level when hierarchy ON
-int  g_itersPlain   = 3/*20*/;     // iterations for level-0 when hierarchy OFF
-// ----------------------------
+// Toggles
+bool g_useHierarchy = true;
+int  g_itersHier    = 3;
+int  g_itersPlain = 3;//20;
+
+// Mapping from any particle id to its source finest (level-0) index
+std::vector<int> coarseFromFine;
 
 inline int idx(int x, int y) { return y * clothW + x; }
 
+// ---------- Level-0 build ----------
 void buildLevel0() {
   P.clear();
   P.resize(clothW * clothH);
   levelParticles.assign(Lmax + 1, {});
   constraints.clear();
 
-  // NEW: initialize mapping for level-0
   coarseFromFine.assign(clothW * clothH, -1);
 
   for (int y = 0; y < clothH; ++y) {
@@ -92,8 +92,6 @@ void buildLevel0() {
         P[id].w = 0.0f;
       }
       levelParticles[0].push_back(id);
-
-      // NEW: level-0 particle maps to itself
       coarseFromFine[id] = id;
     }
   }
@@ -109,7 +107,7 @@ void buildLevel0() {
   }
 }
 
-
+// ---------- Hierarchy build ----------
 void buildHierarchy() {
   for (int l = 1; l <= Lmax; ++l) {
     int step = 1 << l;
@@ -145,7 +143,6 @@ void buildHierarchy() {
           levelParticles[l].push_back(pid);
           mapL_level[finest] = pid;
 
-          // NEW: remember which finest index this coarse particle comes from
           if ((int)coarseFromFine.size() < (int)P.size())
             coarseFromFine.resize(P.size(), -1);
           coarseFromFine[pid] = finest;
@@ -199,7 +196,7 @@ void buildHierarchy() {
   }
 }
 
-
+// ---------- Constraint projection ----------
 void projectConstraint(const Constraint &Cst) {
   Particle &A = P[Cst.i];
   Particle &B = P[Cst.j];
@@ -226,24 +223,17 @@ void solveLevel(int level, int iterations) {
   }
 }
 
+// ---------- Hierarchical solver (with restriction + prolongation) ----------
 void hierarchicalSolve(int solverItersPerLevel = 2) {
   for (int l = Lmax; l >= 0; --l) {
-
-    // NEW: restriction — sync coarse positions from their source finest indices
     if (l > 0) {
       for (int i : levelParticles[l]) {
         int src = (i < (int)coarseFromFine.size()) ? coarseFromFine[i] : -1;
         if (src >= 0) P[i].p = P[src].p;
       }
     }
-
-    // save q_l (pre-projection positions on this level)
     for (int i : levelParticles[l]) P[i].q = P[i].p;
-
-    // project constraints on this level
     solveLevel(l, solverItersPerLevel);
-
-    // prolongation — propagate corrections (p - q) down to level l-1
     if (l > 0) {
       for (int i : levelParticles[l - 1]) {
         vec3 corr(0);
@@ -258,6 +248,12 @@ void hierarchicalSolve(int solverItersPerLevel = 2) {
   }
 }
 
+// ---------- Metrics/CSV (header-only) ----------
+#include "hpbd_metrics.h"
+
+// Live logging toggle + logger
+bool g_logLive = false;
+CsvLogger g_logger;
 
 std::vector<vec3> prevX;
 
@@ -265,21 +261,22 @@ void simulate() {
   prevX.resize(P.size());
   for (size_t i = 0; i < P.size(); ++i) prevX[i] = P[i].p;
 
-  // integrate only finest level (original DoFs)
+  // integrate only level-0
   for (auto &a : P)
     if (!a.pinned && a.level == 0) {
       a.v += dt * g;
       a.p += dt * a.v;
     }
 
-  // toggle between hierarchical and plain PBD
+  // call solvers (logged or plain)
   if (g_useHierarchy) {
-    hierarchicalSolve(g_itersHier);
+    if (g_logLive) hpbdlog::hierarchicalCyclesLogged(/*cycles*/1, g_itersHier, g_logger, "hier");
+    else            hierarchicalSolve(g_itersHier);
   } else {
-    solveLevel(0, g_itersPlain);
+    if (g_logLive) hpbdlog::solveLevelLogged(0, g_itersPlain, g_logger, "plain");
+    else            solveLevel(0, g_itersPlain);
   }
 
-  // reconstruct velocities from displacement
   for (size_t i = 0; i < P.size(); ++i) {
     vec3 xnew = P[i].p;
     P[i].v = (xnew - prevX[i]) / dt;
@@ -296,12 +293,9 @@ void drawCloth() {
     }
   glEnd();
 
-  // draw higher levels only when hierarchy toggle is ON
   if (g_useHierarchy) {
     for (int l = 1; l <= Lmax; ++l) {
-      float zoff = 0.003f * l;
-      glPointSize(4.0f + 2.0f * l);
-      glTranslatef(0.f, 0.f, zoff);
+      glPointSize(4.0f);
       glBegin(GL_POINTS);
       for (int i : levelParticles[l]) {
         glColor3f(0.2f + 0.3f * l, 0.6f - 0.2f * l, 1.0f - 0.3f * l);
@@ -367,7 +361,7 @@ void mouseWheel(int wheel, int direction, int x, int y) {
   if (camDist > 6.0f) camDist = 6.0f;
 }
 
-// reset simulation to initial state
+// ---------- Reset & Benchmark ----------
 void resetSim() {
   constraints.clear();
   levelParticles.clear();
@@ -375,7 +369,35 @@ void resetSim() {
   buildHierarchy();
 }
 
-// keyboard controls (toggle & params)
+// Create a single predicted step so residual is non-zero (for static benchmarks)
+void makePredictedStateOnce() {
+  for (auto& a : P) a.v = vec3(0);
+  for (auto &a : P)
+    if (!a.pinned && a.level == 0) {
+      a.v += dt * g;
+      a.p += dt * a.v;
+    }
+}
+
+void runBenchmark() {
+  std::puts("[bench] start");
+
+  g_logger.open("plain.csv");
+  resetSim();
+  makePredictedStateOnce();                 // fixed initial predicted state
+  hpbdlog::solveLevelLogged(0, /*iterations*/20, g_logger, "plain");
+  g_logger.close();
+
+  g_logger.open("hier.csv");
+  resetSim();
+  makePredictedStateOnce();                 // same initial predicted state
+  hpbdlog::hierarchicalCyclesLogged(/*cycles*/6, /*itersPerLevel*/2, g_logger, "hier");
+  g_logger.close();
+
+  std::puts("[bench] done -> plain.csv, hier.csv");
+}
+
+// ---------- Keyboard ----------
 void keyboard(unsigned char key, int, int) {
   switch (key) {
     case 'h': case 'H':
@@ -397,6 +419,14 @@ void keyboard(unsigned char key, int, int) {
     case '{':
       g_itersPlain = std::max(g_itersPlain - 1, 1);
       std::printf("itersPlain=%d\n", g_itersPlain);
+      break;
+    case 'l': case 'L':
+      g_logLive = !g_logLive;
+      if (g_logLive) { g_logger.open("hpbd_live.csv"); std::puts("[log] start hpbd_live.csv"); }
+      else           { g_logger.close();               std::puts("[log] stop"); }
+      break;
+    case 'b': case 'B':
+      runBenchmark();
       break;
     case 'r': case 'R':
       resetSim();
