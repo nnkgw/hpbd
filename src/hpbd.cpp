@@ -445,6 +445,14 @@ void keyboard(unsigned char key, int, int) {
       camDist *= 0.9f; if (camDist < 0.5f) camDist = 0.5f; break;
     case '-':
       camDist *= 1.1f; if (camDist > 6.0f) camDist = 6.0f; break;
+    case 27:  // ESC
+      if (g_logLive) { g_logger.close(); g_logLive = false; }
+#if defined(FREEGLUT)
+      glutLeaveMainLoop();  // leave main loop if using FreeGLUT
+#else
+      std::exit(0);         // fallback for other GLUT implementations
+#endif
+      break;
   }
 }
 
