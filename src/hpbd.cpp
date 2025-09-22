@@ -1,4 +1,4 @@
-﻿// hpbd.cpp - Hierarchical Position-Based Dynamics (paper-faithful options)
+﻿// hpbd.cpp - Hierarchical Position-Based Dynamics (with minimal metrics/logging hooks)
 #if defined(WIN32)
 #pragma warning(disable:4996)
 #include <GL/freeglut.h>
@@ -16,9 +16,6 @@
 #include <cmath>
 #include <algorithm>
 #include <cstdio>
-#include <cstdlib>   // for std::exit
-#include <fstream>   // for paper_sweep.csv
-#include <iomanip>
 
 using glm::vec2;
 using glm::vec3;
@@ -64,8 +61,8 @@ bool lbtn = false, rbtn = false;
 
 // Toggles
 bool g_useHierarchy = true;
-int  g_itersHier    = 3;
-int  g_itersPlain   = 3; // keep small for quick comparisons
+int  g_itersHier    =  3;
+int  g_itersPlain   = 20;
 
 // Mapping from any particle id to its source finest (level-0) index
 std::vector<int> coarseFromFine;
@@ -89,14 +86,11 @@ void buildLevel0() {
       P[id].v = vec3(0);
       P[id].w = 1.0f;
       P[id].level = 0;
-
-      // Paper-style boundary: pin entire top row (y==0)
-      if (y == 0) {
+      if (y == 0 && (x == 0 || x == clothW - 1)) {
         P[id].pinned = true;
         P[id].pinPos = P[id].p;
         P[id].w = 0.0f;
       }
-
       levelParticles[0].push_back(id);
       coarseFromFine[id] = id;
     }
@@ -105,20 +99,10 @@ void buildLevel0() {
   auto addEdge = [&](int a, int b) {
     constraints.push_back({a, b, length(P[a].p - P[b].p), 0});
   };
-
-  // structural (horizontal/vertical)
   for (int y = 0; y < clothH; ++y) {
     for (int x = 0; x < clothW; ++x) {
       if (x + 1 < clothW) addEdge(idx(x, y), idx(x + 1, y));
       if (y + 1 < clothH) addEdge(idx(x, y), idx(x, y + 1));
-    }
-  }
-
-  // shear (diagonals) to mimic triangular grid
-  for (int y = 0; y < clothH - 1; ++y) {
-    for (int x = 0; x < clothW - 1; ++x) {
-      addEdge(idx(x, y),     idx(x + 1, y + 1));
-      addEdge(idx(x + 1, y), idx(x,     y + 1));
     }
   }
 }
@@ -147,9 +131,10 @@ void buildHierarchy() {
           Particle parent = P[finest];
           parent.level = l;
 
-          // Pin all parents on the top row as well (fy==0)
           bool isTop = (fy == 0);
-          parent.pinned = isTop;
+          bool isTopLeft  = isTop && (fx == 0);
+          bool isTopRight = isTop && (fx == clothW - 1);
+          parent.pinned = (isTopLeft || isTopRight);
           parent.w = parent.pinned ? 0.0f : 1.0f;
           if (parent.pinned) parent.pinPos = parent.p;
 
@@ -218,12 +203,8 @@ void projectConstraint(const Constraint &Cst) {
   vec3 n = A.p - B.p;
   float dist = length(n);
   if (dist < 1e-8f) return;
-
-  // Unilateral upper bound on coarse levels: act only when overstretched
-  if (Cst.level > 0 && dist <= Cst.rest) return;
-
   n /= dist;
-  float Cval = dist - Cst.rest; // positive when overstretched
+  float Cval = dist - Cst.rest;
   float s = A.w * dot(n, n) + B.w * dot(n, n);
   if (s <= 1e-12f) return;
   float lambda = -Cval / s;
@@ -296,7 +277,6 @@ void simulate() {
     else            solveLevel(0, g_itersPlain);
   }
 
-  // update velocities from displacement
   for (size_t i = 0; i < P.size(); ++i) {
     vec3 xnew = P[i].p;
     P[i].v = (xnew - prevX[i]) / dt;
@@ -347,13 +327,13 @@ void reshape(int w, int h) {
   gluPerspective(45.0, (double)w / h, 0.01, 10.0);
 }
 
-// Fixed-fps idle: simulate once and wait until dt elapsed, then request redraw
 void idle(void){
-  GLfloat time0 = (float)glutGet(GLUT_ELAPSED_TIME) * 0.001f;
+  GLfloat time = (float)glutGet(GLUT_ELAPSED_TIME) / 1000.0f;
   simulate();
-  while (true) {
-    GLfloat now = (float)glutGet(GLUT_ELAPSED_TIME) * 0.001f;
-    if (now - time0 > dt) break;
+  while(1) {
+    if (((float)glutGet(GLUT_ELAPSED_TIME) / 1000.0f - time) > dt) {
+      break; // keep fps
+    }
   }
   glutPostRedisplay();
 }
@@ -409,75 +389,6 @@ void makePredictedStateOnce() {
     }
 }
 
-// Plain L0: count iterations until RelativeStretch (Lmax) <= target
-int runUntilThreshold_L0(double target_pct, int max_iters) {
-  for (int it = 1; it <= max_iters; ++it) {
-    solveLevel(0, 1);
-    if (computeRelStretchLmaxpct() <= target_pct) return it;
-  }
-  return max_iters + 1;
-}
-
-// Hierarchy: one V-cycle (all levels) = 1 iteration
-int runUntilThreshold_HIER(double target_pct, int max_iters, int itersPerLevel) {
-  for (int it = 1; it <= max_iters; ++it) {
-    hierarchicalSolve(itersPerLevel);
-    if (computeRelStretchLmaxpct() <= target_pct) return it;
-  }
-  return max_iters + 1;
-}
-
-// Figure-3-style sweep CSV for levels {0,3,5}
-void runPaperReproSweepCSV(const char* outCsvPath,
-                           const std::vector<int>& levels = {0,3,5},
-                           const std::vector<int>& thresholds = {25,23,21,19,17,15,13,11,9,7,5},
-                           int max_iters = 30,
-                           int itersPerLevel = 2)
-{
-  std::ofstream ofs(outCsvPath);
-  ofs << "threshold_pct";
-  for (int L : levels) ofs << ",iters_L" << L;
-  for (int L : levels) ofs << ",iters_L" << L << "_L1";
-  ofs << "\n";
-
-  for (int th : thresholds) {
-    ofs << th;
-
-    // Lmax-based counts
-    for (int L : levels) {
-      Lmax = L;
-      constraints.clear(); levelParticles.clear();
-      buildLevel0(); buildHierarchy();
-      makePredictedStateOnce();
-
-      int iters = (L == 0)
-        ? runUntilThreshold_L0(th, max_iters)
-        : runUntilThreshold_HIER(th, max_iters, itersPerLevel);
-      ofs << "," << iters;
-    }
-
-    // L1-based counts (optional diagnostics)
-    for (int L : levels) {
-      Lmax = L;
-      constraints.clear(); levelParticles.clear();
-      buildLevel0(); buildHierarchy();
-      makePredictedStateOnce();
-
-      int reached = max_iters + 1;
-      for (int it = 1; it <= max_iters; ++it) {
-        if (L == 0) solveLevel(0, 1);
-        else        hierarchicalSolve(itersPerLevel);
-        if (computeRelStretchL1pct() <= th) { reached = it; break; }
-      }
-      ofs << "," << reached;
-    }
-
-    ofs << "\n";
-  }
-  ofs.close();
-  std::printf("[paper] sweep -> %s\n", outCsvPath);
-}
-
 void runBenchmark() {
   std::puts("[bench] start");
 
@@ -526,10 +437,6 @@ void keyboard(unsigned char key, int, int) {
       break;
     case 'b': case 'B':
       runBenchmark();
-      break;
-    case 'p': case 'P':
-      runPaperReproSweepCSV("paper_sweep.csv");
-      std::puts("[paper] sweep done -> paper_sweep.csv");
       break;
     case 'r': case 'R':
       resetSim();
