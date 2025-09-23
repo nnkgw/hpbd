@@ -418,26 +418,25 @@ void runBenchmark() {
 
 // ---------- Keyboard ----------
 void keyboard(unsigned char key, int, int) {
+  // Adjust the active iteration count depending on the current mode
+  auto adjustActiveIters = [&](int delta){
+    int &it = (g_useHierarchy ? g_itersHier : g_itersPlain);
+    const int lo = 1;
+    const int hi = g_useHierarchy ? 10 : 60; // keep original caps
+    it = std::clamp(it + delta, lo, hi);
+    std::printf("%s=%d\n", g_useHierarchy ? "itersHier" : "itersPlain", it);
+  };
+
   switch (key) {
     case 'h': case 'H':
       g_useHierarchy = !g_useHierarchy;
       std::printf("[Toggle] Hierarchy = %s\n", g_useHierarchy ? "ON" : "OFF");
       break;
-    case ']':
-      g_itersHier = std::min(g_itersHier + 1, 10);
-      std::printf("itersHier=%d\n", g_itersHier);
+    case ']':  // increment the iteration count of the active mode
+      adjustActiveIters(+1);
       break;
-    case '[':
-      g_itersHier = std::max(g_itersHier - 1, 1);
-      std::printf("itersHier=%d\n", g_itersHier);
-      break;
-    case '}':
-      g_itersPlain = std::min(g_itersPlain + 1, 60);
-      std::printf("itersPlain=%d\n", g_itersPlain);
-      break;
-    case '{':
-      g_itersPlain = std::max(g_itersPlain - 1, 1);
-      std::printf("itersPlain=%d\n", g_itersPlain);
+    case '[':  // decrement the iteration count of the active mode
+      adjustActiveIters(-1);
       break;
     case 'l': case 'L':
       g_logLive = !g_logLive;
@@ -451,9 +450,11 @@ void keyboard(unsigned char key, int, int) {
       resetSim();
       break;
     case '+':
-      camDist *= 0.9f; if (camDist < 0.5f) camDist = 0.5f; break;
+      camDist *= 0.9f; if (camDist < 0.5f) camDist = 0.5f;
+      break;
     case '-':
-      camDist *= 1.1f; if (camDist > 6.0f) camDist = 6.0f; break;
+      camDist *= 1.1f; if (camDist > 6.0f) camDist = 6.0f;
+      break;
     case 27:  // ESC
       if (g_logLive) { g_logger.close(); g_logLive = false; }
 #if defined(FREEGLUT)
@@ -464,6 +465,7 @@ void keyboard(unsigned char key, int, int) {
       break;
   }
 }
+
 
 int main(int argc, char **argv) {
   glutInit(&argc, argv);
