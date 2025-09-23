@@ -1,4 +1,4 @@
-﻿// hpbd.cpp - Hierarchical Position-Based Dynamics (with minimal metrics/logging hooks)
+﻿// hpbd.cpp - Hierarchical Position-Based Dynamics
 #if defined(WIN32)
 #pragma warning(disable:4996)
 #include <GL/freeglut.h>
@@ -329,10 +329,13 @@ void reshape(int w, int h) {
 
 void idle(void){
   GLfloat time = (float)glutGet(GLUT_ELAPSED_TIME) / 1000.0f;
+
   hpbdperf::sim_begin();
   simulate();
   hpbdperf::sim_end();
+
   glutSetWindowTitle(hpbdperf::title_with_ms("Hierarchical Position-Based Dynamics"));
+
   while(1) {
     if (((float)glutGet(GLUT_ELAPSED_TIME) / 1000.0f - time) > dt) {
       break; // keep fps
@@ -384,12 +387,15 @@ void resetSim() {
 
 // Create a single predicted step so residual is non-zero (for static benchmarks)
 void makePredictedStateOnce() {
-  for (auto& a : P) a.v = vec3(0);
-  for (auto &a : P)
+  for (auto& a : P) {
+    a.v = vec3(0);
+  }
+  for (auto &a : P) {
     if (!a.pinned && a.level == 0) {
       a.v += dt * g;
       a.p += dt * a.v;
     }
+  }
 }
 
 void runBenchmark() {

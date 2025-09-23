@@ -1,4 +1,4 @@
-// hpbd_metrics.h - header-only metrics & CSV logging for HPBD
+// hpbd_metrics.h - header-only metrics & CSV logging
 #pragma once
 #include <cstdio>
 #include <chrono>
