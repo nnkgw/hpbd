@@ -329,7 +329,10 @@ void reshape(int w, int h) {
 
 void idle(void){
   GLfloat time = (float)glutGet(GLUT_ELAPSED_TIME) / 1000.0f;
+  hpbdperf::sim_begin();
   simulate();
+  hpbdperf::sim_end();
+  glutSetWindowTitle(hpbdperf::title_with_ms("Hierarchical Position-Based Dynamics"));
   while(1) {
     if (((float)glutGet(GLUT_ELAPSED_TIME) / 1000.0f - time) > dt) {
       break; // keep fps
