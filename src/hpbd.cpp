@@ -426,7 +426,6 @@ void keyboard(unsigned char key, int, int) {
     it = std::clamp(it + delta, lo, hi);
     std::printf("%s=%d\n", g_useHierarchy ? "itersHier" : "itersPlain", it);
   };
-
   switch (key) {
     case 'h': case 'H':
       g_useHierarchy = !g_useHierarchy;
@@ -465,7 +464,6 @@ void keyboard(unsigned char key, int, int) {
       break;
   }
 }
-
 
 int main(int argc, char **argv) {
   glutInit(&argc, argv);
