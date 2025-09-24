@@ -127,11 +127,9 @@ namespace hpbdperf {
   inline Clock::time_point g_sim_t0;
   inline double g_last_sim_ms = 0.0;
 
-  // begin timing before simulate()
   inline void sim_begin() {
     g_sim_t0 = Clock::now();
   }
-  // end timing after simulate(); returns elapsed ms and stores to g_last_sim_ms
   inline double sim_end() {
     auto t1 = Clock::now();
     g_last_sim_ms = std::chrono::duration_cast<std::chrono::microseconds>(t1 - g_sim_t0).count() / 1000.0;
@@ -139,7 +137,6 @@ namespace hpbdperf {
   }
   inline double last_ms() { return g_last_sim_ms; }
 
-  // format window title like: "Hierarchical Position-Based Dynamics  [X.XX ms]"
   inline const char* title_with_ms(const char* base) {
     static char buf[256];
     std::snprintf(buf, sizeof(buf), "%s  [%.2f ms]", base, g_last_sim_ms);

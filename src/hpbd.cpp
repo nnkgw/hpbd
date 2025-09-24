@@ -251,8 +251,6 @@ void hierarchicalSolve(int solverItersPerLevel = 2) {
 // ---------- Metrics/CSV (header-only) ----------
 #include "hpbd_metrics.h"
 
-// Live logging toggle + logger
-bool g_logLive = false;
 CsvLogger g_logger;
 
 std::vector<vec3> prevX;
@@ -268,13 +266,11 @@ void simulate() {
       a.p += dt * a.v;
     }
 
-  // call solvers (logged or plain)
+  // call solvers
   if (g_useHierarchy) {
-    if (g_logLive) hpbdlog::hierarchicalCyclesLogged(/*cycles*/1, g_itersHier, g_logger, "hier");
-    else            hierarchicalSolve(g_itersHier);
+    hierarchicalSolve(g_itersHier);
   } else {
-    if (g_logLive) hpbdlog::solveLevelLogged(0, g_itersPlain, g_logger, "plain");
-    else            solveLevel(0, g_itersPlain);
+    solveLevel(0, g_itersPlain);
   }
 
   for (size_t i = 0; i < P.size(); ++i) {
@@ -418,8 +414,7 @@ void runBenchmark() {
 
 // ---------- Keyboard ----------
 void keyboard(unsigned char key, int, int) {
-  // Adjust the active iteration count depending on the current mode
-  auto adjustActiveIters = [&](int delta){
+  auto adjustActiveIters = [&](int delta){   // Adjust the active iteration count depending on the current mode
     int &it = (g_useHierarchy ? g_itersHier : g_itersPlain);
     const int lo = 1;
     const int hi = g_useHierarchy ? 10 : 60; // keep original caps
@@ -437,11 +432,6 @@ void keyboard(unsigned char key, int, int) {
     case '[':  // decrement the iteration count of the active mode
       adjustActiveIters(-1);
       break;
-    case 'l': case 'L':
-      g_logLive = !g_logLive;
-      if (g_logLive) { g_logger.open("hpbd_live.csv"); std::puts("[log] start hpbd_live.csv"); }
-      else           { g_logger.close();               std::puts("[log] stop"); }
-      break;
     case 'b': case 'B':
       runBenchmark();
       break;
@@ -455,7 +445,6 @@ void keyboard(unsigned char key, int, int) {
       camDist *= 1.1f; if (camDist > 6.0f) camDist = 6.0f;
       break;
     case 27:  // ESC
-      if (g_logLive) { g_logger.close(); g_logLive = false; }
 #if defined(FREEGLUT)
       glutLeaveMainLoop();
 #else
