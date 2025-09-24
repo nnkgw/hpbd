@@ -477,6 +477,42 @@ void keyboard(unsigned char key, int, int) {
   }
 }
 
+void usage() {
+  std::puts("=== Hierarchical Position-Based Dynamics Controls ===");
+  std::printf("Grid: %dx%d, Lmax=%d, dt=%.4f s\n", clothW, clothH, Lmax, dt);
+  std::printf("Mode: Hierarchy=%s  (iters: hier=%d, plain=%d)\n",
+              g_useHierarchy ? "ON" : "OFF", g_itersHier, g_itersPlain);
+
+  std::puts("\nMouse:");
+  std::puts("  Left-drag   : rotate camera (yaw/pitch)");
+  std::puts("  Right-drag  : pan");
+  std::puts("  Wheel       : zoom");
+
+  std::puts("\nKeyboard:");
+  std::puts("  H           : toggle hierarchy ON/OFF");
+  std::puts("  [ / ]       : decrement / increment iterations of the ACTIVE mode");
+  std::puts("  R           : reset simulation");
+  std::puts("  B           : run Figure.3 benchmark (writes fig3.csv)");
+  std::puts("  + / -       : zoom in / out");
+  std::puts("  ESC         : quit");
+
+  std::puts("\nBenchmark:");
+  std::puts("  - X-axis: Relative stretch (%) = {25,23,...,5} (decreasing)");
+  std::puts("  - Y-axis: Number of iterations");
+  std::puts("  - Series: L=0 vs L=3 (hierarchical V-cycles)");
+  std::puts("  Output : fig3.csv");
+
+  std::puts("\nNotes:");
+  std::puts("  - Window title shows last simulate() time in milliseconds.");
+  std::puts("  - Fixed time step = 1/60 sec;\n");
+}
+
+void init() {
+  buildLevel0();
+  buildHierarchy();
+  usage();
+}
+
 int main(int argc, char **argv) {
   glutInit(&argc, argv);
   glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
@@ -486,8 +522,7 @@ int main(int argc, char **argv) {
   glEnable(GL_DEPTH_TEST);
   glClearColor(0.1f, 0.1f, 0.1f, 1);
 
-  buildLevel0();
-  buildHierarchy();
+  init();
 
   glutDisplayFunc(display);
   glutReshapeFunc(reshape);
