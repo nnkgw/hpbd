@@ -16,6 +16,7 @@
 #include <cmath>
 #include <algorithm>
 #include <cstdio>
+#include <fstream>   // <-- for CSV output
 
 using glm::vec2;
 using glm::vec3;
@@ -61,8 +62,8 @@ bool lbtn = false, rbtn = false;
 
 // Toggles
 bool g_useHierarchy = true;
-int  g_itersHier    =  3;
-int  g_itersPlain   = 20;
+int  g_itersHier    =   3;
+int  g_itersPlain   =  20;
 
 // Mapping from any particle id to its source finest (level-0) index
 std::vector<int> coarseFromFine;
@@ -266,7 +267,6 @@ void simulate() {
       a.p += dt * a.v;
     }
 
-  // call solvers
   if (g_useHierarchy) {
     hierarchicalSolve(g_itersHier);
   } else {
@@ -373,7 +373,7 @@ void mouseWheel(int wheel, int direction, int x, int y) {
   if (camDist > 6.0f) camDist = 6.0f;
 }
 
-// ---------- Reset & Benchmark ----------
+// ---------- Reset ----------
 void resetSim() {
   constraints.clear();
   levelParticles.clear();
@@ -381,43 +381,72 @@ void resetSim() {
   buildHierarchy();
 }
 
-// Create a single predicted step so residual is non-zero (for static benchmarks)
-void makePredictedStateOnce() {
-  for (auto& a : P) {
-    a.v = vec3(0);
-  }
-  for (auto &a : P) {
-    if (!a.pinned && a.level == 0) {
+// Over-stretch the level-0 mesh by pure gravity prediction (no solves)
+static void overstretchTo(double targetPct, int maxSteps = 12) {
+  for (int s = 0; s < maxSteps && computeRelStretchLmaxpct() < targetPct; ++s) {
+    for (auto &a : P) if (!a.pinned && a.level == 0) {
       a.v += dt * g;
       a.p += dt * a.v;
     }
   }
 }
 
+// ---------- Helpers for Figure-3 style sweep ----------
+static int runUntilThreshold_L0(double target_pct, int max_iters) {
+  for (int it = 1; it <= max_iters; ++it) {
+    solveLevel(0, 1);
+    if (computeRelStretchLmaxpct() <= target_pct) return it;
+  }
+  return max_iters + 1;
+}
+
+static int runUntilThreshold_HIER(double target_pct, int max_iters, int itersPerLevel) {
+  for (int it = 1; it <= max_iters; ++it) {
+    hierarchicalSolve(itersPerLevel);  // one V-cycle per iteration
+    if (computeRelStretchLmaxpct() <= target_pct) return it;
+  }
+  return max_iters + 1;
+}
+
+// ---------- Benchmark (replaced): write paper_fig3.csv with L0 and L3 ----------
 void runBenchmark() {
-  std::puts("[bench] start");
+  std::puts("[paper] Figure-3 style sweep (levels 0 and 3)");
 
-  g_logger.open("plain.csv");
-  resetSim();
-  makePredictedStateOnce();                 // fixed initial predicted state
-  hpbdlog::solveLevelLogged(0, /*iterations*/20, g_logger, "plain");
-  g_logger.close();
+  const int max_iters = 30;        // stop if not reached earlier
+  const int itersPerLevel = 2;     // coarse/fine iterations per level in a V-cycle
+  const int thresholdsArr[] = {25,23,21,19,17,15,13,11,9,7,5};
 
-  g_logger.open("hier.csv");
-  resetSim();
-  makePredictedStateOnce();                 // same initial predicted state
-  hpbdlog::hierarchicalCyclesLogged(/*cycles*/6, /*itersPerLevel*/2, g_logger, "hier");
-  g_logger.close();
+  std::ofstream ofs("paper_fig3.csv");
+  if (!ofs) { std::perror("paper_fig3.csv"); return; }
+  ofs << "threshold_pct,iters_L0,iters_L3\n";
 
-  std::puts("[bench] done -> plain.csv, hier.csv");
+  for (int th : thresholdsArr) {
+    // L = 0
+    Lmax = 0;
+    resetSim();
+    overstretchTo(30.0);
+    int it0 = runUntilThreshold_L0(th, max_iters);
+
+    // L = 3
+    Lmax = 3;
+    resetSim();
+    overstretchTo(30.0);
+    int it3 = runUntilThreshold_HIER(th, max_iters, itersPerLevel);
+
+    ofs << th << "," << it0 << "," << it3 << "\n";
+    std::printf("  threshold %2d%% -> L0:%d  L3:%d\n", th, it0, it3);
+  }
+
+  ofs.close();
+  std::puts("[paper] wrote paper_fig3.csv (threshold_pct,iters_L0,iters_L3)");
 }
 
 // ---------- Keyboard ----------
 void keyboard(unsigned char key, int, int) {
-  auto adjustActiveIters = [&](int delta){   // Adjust the active iteration count depending on the current mode
+  auto adjustActiveIters = [&](int delta){
     int &it = (g_useHierarchy ? g_itersHier : g_itersPlain);
     const int lo = 1;
-    const int hi = g_useHierarchy ? 10 : 60; // keep original caps
+    const int hi = g_useHierarchy ? 10 : 60;
     it = std::clamp(it + delta, lo, hi);
     std::printf("%s=%d\n", g_useHierarchy ? "itersHier" : "itersPlain", it);
   };
@@ -426,12 +455,8 @@ void keyboard(unsigned char key, int, int) {
       g_useHierarchy = !g_useHierarchy;
       std::printf("[Toggle] Hierarchy = %s\n", g_useHierarchy ? "ON" : "OFF");
       break;
-    case ']':  // increment the iteration count of the active mode
-      adjustActiveIters(+1);
-      break;
-    case '[':  // decrement the iteration count of the active mode
-      adjustActiveIters(-1);
-      break;
+    case ']': adjustActiveIters(+1); break;
+    case '[': adjustActiveIters(-1); break;
     case 'b': case 'B':
       runBenchmark();
       break;
@@ -439,12 +464,10 @@ void keyboard(unsigned char key, int, int) {
       resetSim();
       break;
     case '+':
-      camDist *= 0.9f; if (camDist < 0.5f) camDist = 0.5f;
-      break;
+      camDist *= 0.9f; if (camDist < 0.5f) camDist = 0.5f; break;
     case '-':
-      camDist *= 1.1f; if (camDist > 6.0f) camDist = 6.0f;
-      break;
-    case 27:  // ESC
+      camDist *= 1.1f; if (camDist > 6.0f) camDist = 6.0f; break;
+    case 27:
 #if defined(FREEGLUT)
       glutLeaveMainLoop();
 #else
